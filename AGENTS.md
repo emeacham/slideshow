@@ -38,15 +38,20 @@ The project is split into two targets to keep logic pure and testable:
 | `Slideshow/ContentView.swift` | Root view — welcome screen ↔ slideshow, drag-and-drop handler, toolbar. |
 | `Slideshow/SlideshowView.swift` | Full-screen image display with auto-hiding controls overlay. |
 | `Slideshow/AsyncImageView.swift` | `NSViewRepresentable` wrapping `NSImageView` (GIF-aware, WebP-aware). |
+| `Slideshow/VideoPlayerView.swift` | `NSViewRepresentable` wrapping `AVPlayerView` for WebM video playback. |
 | `Slideshow/AppState.swift` | Singleton shared state (credits sheet visibility) for `.commands{}` access. |
 
 ---
 
-## Supported Image Formats
+## Supported Formats
 
+### Images
 `jpg` · `jpeg` · `png` · `gif` (animated) · `bmp` · `tiff` · `tif` · `heic` · `heif` · `webp`
 
-Defined in `ImageFileLoader.supportedExtensions`. The test `testSupportedExtensionsContainsCommonFormats` must be updated alongside any format changes.
+### Video
+`webm` (VP8/VP9, macOS 11+)
+
+All formats are defined via `ImageFileLoader`. Video extensions live in `ImageFileLoader.videoExtensions` and are automatically unioned into `supportedExtensions`. `SlideshowView` dispatches to `VideoPlayerView` (AVKit) for video and `AsyncImageView` (NSImageView) for everything else.
 
 ---
 
@@ -57,6 +62,12 @@ Defined in `ImageFileLoader.supportedExtensions`. The test `testSupportedExtensi
 1. Add the lowercase extension string to `ImageFileLoader.supportedExtensions` in `Sources/SlideshowCore/ImageFileLoader.swift`
 2. Add an `XCTAssertTrue(ext.contains("…"))` line in `ImageFileLoaderTests.testSupportedExtensionsContainsCommonFormats`
 3. Update the format list in `README.md`
+
+### Adding a new video format
+
+1. Add the lowercase extension to `ImageFileLoader.videoExtensions` — it is automatically included in `supportedExtensions` via `Set.union`
+2. Confirm AVFoundation decodes the codec on the target macOS version; add `AVURLAsset` options in `VideoPlayerView` if needed
+3. Add assertions in `ImageFileLoaderTests.testVideoExtensionsContainsWebM` (or add a new test) and update `README.md`
 
 ### Adding a new transition type
 

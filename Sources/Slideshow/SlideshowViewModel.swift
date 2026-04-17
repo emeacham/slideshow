@@ -105,6 +105,17 @@ final class SlideshowViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Video playback
+
+    /// Called by VideoPlayerView when a video reaches its natural end.
+    /// When the slideshow is playing, advances to the next slide and resets
+    /// the slide timer so the following slide gets its full duration.
+    func videoDidFinish() {
+        guard isPlaying else { return }
+        next()
+        restartTimer()
+    }
+
     // MARK: - Navigation
 
     func next() {
@@ -146,7 +157,7 @@ final class SlideshowViewModel: ObservableObject {
             .sink { [weak self] _ in self?.next() }
     }
 
-    private func restartTimer() {
+    func restartTimer() {
         guard isPlaying else { return }
         scheduleTimer()
     }

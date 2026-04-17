@@ -3,6 +3,7 @@
 // GNU General Public License v3 — see LICENSE
 
 import SwiftUI
+import SlideshowCore
 
 struct SlideshowView: View {
     @ObservedObject var viewModel: SlideshowViewModel
@@ -16,7 +17,7 @@ struct SlideshowView: View {
             Color.black.ignoresSafeArea()
 
             if let url = viewModel.currentImageURL {
-                AsyncImageView(url: url)
+                mediaView(for: url)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .id(viewModel.currentIndex)
                     .transition(viewModel.transitionType.swiftUITransition)
@@ -54,6 +55,15 @@ struct SlideshowView: View {
             }
         }
         .onAppear { showControlsTemporarily() }
+    }
+
+    @ViewBuilder
+    private func mediaView(for url: URL) -> some View {
+        if ImageFileLoader.videoExtensions.contains(url.pathExtension.lowercased()) {
+            VideoPlayerView(url: url, onFinish: viewModel.videoDidFinish)
+        } else {
+            AsyncImageView(url: url)
+        }
     }
 
     private func showControlsTemporarily() {

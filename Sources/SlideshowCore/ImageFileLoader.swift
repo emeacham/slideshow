@@ -6,10 +6,12 @@ import Foundation
 
 public struct ImageFileLoader {
 
+    public static let videoExtensions: Set<String> = ["webm"]
+
     public static let supportedExtensions: Set<String> = [
         "jpg", "jpeg", "png", "gif", "bmp",
-        "tiff", "tif", "heic", "heif", "webp"
-    ]
+        "tiff", "tif", "heic", "heif", "webp",
+    ].union(videoExtensions)
 
     public static func loadImages(from directory: URL) throws -> [URL] {
         let contents = try FileManager.default.contentsOfDirectory(
