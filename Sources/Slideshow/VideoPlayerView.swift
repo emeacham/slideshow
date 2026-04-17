@@ -14,7 +14,7 @@ struct VideoPlayerView: NSViewRepresentable {
 
     // MARK: - Coordinator
 
-    final class Coordinator: NSObject, WKScriptMessageHandler {
+    final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         var onFinish: () -> Void = {}
         var currentURL: URL?
 
@@ -22,7 +22,31 @@ struct VideoPlayerView: NSViewRepresentable {
             _ userContentController: WKUserContentController,
             didReceive message: WKScriptMessage
         ) {
-            onFinish()
+            guard let body = message.body as? String else { return }
+            switch message.name {
+            case "videoEnded":
+                DebugLog.shared.log("VIDEO", "ended event fired")
+                onFinish()
+            case "videoError":
+                DebugLog.shared.log("VIDEO-ERR", body)
+            case "jsLog":
+                DebugLog.shared.log("JS", body)
+            default:
+                break
+            }
+        }
+
+        // WKNavigationDelegate — catch load failures
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            DebugLog.shared.log("WK-NAV", "didFail: \(error.localizedDescription)")
+        }
+
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            DebugLog.shared.log("WK-NAV", "provisionalFail: \(error.localizedDescription)")
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            DebugLog.shared.log("WK-NAV", "didFinish load")
         }
     }
 
@@ -47,11 +71,14 @@ struct VideoPlayerView: NSViewRepresentable {
     func makeNSView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.mediaTypesRequiringUserActionForPlayback = []
-        config.userContentController.add(
-            WeakMessageHandler(context.coordinator),
-            name: "videoEnded"
-        )
+
+        let proxy = WeakMessageHandler(context.coordinator)
+        config.userContentController.add(proxy, name: "videoEnded")
+        config.userContentController.add(proxy, name: "videoError")
+        config.userContentController.add(proxy, name: "jsLog")
+
         let webView = WKWebView(frame: .zero, configuration: config)
+        webView.navigationDelegate = context.coordinator
         webView.setValue(false, forKey: "drawsBackground")
         return webView
     }
@@ -61,9 +88,29 @@ struct VideoPlayerView: NSViewRepresentable {
         guard context.coordinator.currentURL != url else { return }
         context.coordinator.currentURL = url
 
+        let log = DebugLog.shared
+
+        // Log file metadata
+        let path = url.path
+        let fm = FileManager.default
+        let exists = fm.fileExists(atPath: path)
+        let readable = fm.isReadableFile(atPath: path)
+        log.log("FILE", "path: \(path)")
+        log.log("FILE", "exists: \(exists), readable: \(readable)")
+
+        if let attrs = try? fm.attributesOfItem(atPath: path) {
+            let size = (attrs[.size] as? Int64) ?? 0
+            let type = (attrs[.type] as? FileAttributeType)?.rawValue ?? "unknown"
+            log.log("FILE", "size: \(size) bytes, type: \(type)")
+        }
+
+        let baseURL = url.deletingLastPathComponent()
+        log.log("WK-LOAD", "baseURL: \(baseURL.path)")
+
         let encodedName = url.lastPathComponent
             .addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
             ?? url.lastPathComponent
+        log.log("WK-LOAD", "src filename (encoded): \(encodedName)")
 
         let html = """
         <!DOCTYPE html>
@@ -77,15 +124,49 @@ struct VideoPlayerView: NSViewRepresentable {
         </style>
         </head>
         <body>
-        <video autoplay playsinline
-               onended="window.webkit.messageHandlers.videoEnded.postMessage('')">
+        <video id="v" autoplay playsinline>
           <source src="\(encodedName)" type="video/webm">
         </video>
+        <script>
+        var v = document.getElementById('v');
+
+        function post(name, msg) {
+            window.webkit.messageHandlers[name].postMessage(msg);
+        }
+
+        v.addEventListener('ended', function() { post('videoEnded', 'ended'); });
+
+        v.addEventListener('error', function(e) {
+            var src = v.currentSrc || '(none)';
+            var code = v.error ? v.error.code : '?';
+            var msg = v.error ? v.error.message : '(no message)';
+            post('videoError', 'MediaError code=' + code + ' msg=' + msg + ' src=' + src);
+        });
+
+        v.addEventListener('loadstart', function() { post('jsLog', 'loadstart'); });
+        v.addEventListener('loadedmetadata', function() {
+            post('jsLog', 'loadedmetadata dur=' + v.duration + ' w=' + v.videoWidth + ' h=' + v.videoHeight);
+        });
+        v.addEventListener('canplay', function() { post('jsLog', 'canplay'); });
+        v.addEventListener('playing', function() { post('jsLog', 'playing'); });
+        v.addEventListener('stalled', function() { post('jsLog', 'stalled'); });
+        v.addEventListener('waiting', function() { post('jsLog', 'waiting'); });
+        v.addEventListener('suspend', function() { post('jsLog', 'suspend'); });
+
+        // Also capture <source> element errors
+        var src = v.querySelector('source');
+        if (src) {
+            src.addEventListener('error', function(e) {
+                post('videoError', 'source-error: failed to load ' + src.src);
+            });
+        }
+
+        post('jsLog', 'script init, currentSrc=' + (v.currentSrc || '(empty)') + ' networkState=' + v.networkState + ' readyState=' + v.readyState);
+        </script>
         </body>
         </html>
         """
 
-        // baseURL is the video's parent directory so the relative src resolves.
-        nsView.loadHTMLString(html, baseURL: url.deletingLastPathComponent())
+        nsView.loadHTMLString(html, baseURL: baseURL)
     }
 }

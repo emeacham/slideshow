@@ -54,8 +54,16 @@ final class SlideshowViewModel: ObservableObject {
     }
 
     func loadDirectory(_ url: URL) {
+        let log = DebugLog.shared
+        log.log("LOAD", "loadDirectory: \(url.path)")
         do {
             let urls = try ImageFileLoader.loadImages(from: url)
+            log.log("LOAD", "found \(urls.count) supported files")
+            for u in urls {
+                let ext = u.pathExtension.lowercased()
+                let isVideo = ImageFileLoader.videoExtensions.contains(ext)
+                log.log("LOAD", "  \(isVideo ? "🎬" : "🖼") \(u.lastPathComponent)")
+            }
             withAnimation(controller.transitionType.animation) {
                 controller.loadImages(urls)
             }
@@ -63,6 +71,7 @@ final class SlideshowViewModel: ObservableObject {
             errorMessage = nil
             if isPlaying { restartTimer() }
         } catch {
+            log.log("LOAD-ERR", error.localizedDescription)
             errorMessage = "Could not load images: \(error.localizedDescription)"
         }
     }
