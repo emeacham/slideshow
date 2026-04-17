@@ -2,65 +2,90 @@
 // Copyright (C) 2026 Ed Meacham (edmeacham.com)
 // GNU General Public License v3 — see LICENSE
 
-import AVKit
+import WebKit
 import SwiftUI
 
-// Wraps AVPlayerView so WebM (and future video formats) play natively.
-// The view always starts playback immediately; onFinish is called when
-// the video reaches its end so the slideshow can auto-advance.
+// AVFoundation does not decode VP8/VP9, so WebM playback uses WKWebView's
+// HTML5 video stack. The video autoplays immediately; onFinish fires via a
+// JS message handler when the video reaches its natural end.
 struct VideoPlayerView: NSViewRepresentable {
     let url: URL
     let onFinish: () -> Void
 
-    final class Coordinator: NSObject {
-        var player: AVPlayer?
-        var endObserver: NSObjectProtocol?
-        // Updated each render pass so the closure always has current state.
-        var onFinish: () -> Void = {}
+    // MARK: - Coordinator
 
-        deinit {
-            if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
+    final class Coordinator: NSObject, WKScriptMessageHandler {
+        var onFinish: () -> Void = {}
+        var currentURL: URL?
+
+        func userContentController(
+            _ userContentController: WKUserContentController,
+            didReceive message: WKScriptMessage
+        ) {
+            onFinish()
+        }
+    }
+
+    // WKUserContentController holds message handlers strongly, which would
+    // create a retain cycle through the view hierarchy. A weak proxy breaks it.
+    private final class WeakMessageHandler: NSObject, WKScriptMessageHandler {
+        weak var coordinator: Coordinator?
+        init(_ coordinator: Coordinator) { self.coordinator = coordinator }
+
+        func userContentController(
+            _ userContentController: WKUserContentController,
+            didReceive message: WKScriptMessage
+        ) {
+            coordinator?.userContentController(userContentController, didReceive: message)
         }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    func makeNSView(context: Context) -> AVPlayerView {
-        let view = AVPlayerView()
-        view.controlsStyle = .none
-        view.videoGravity = .resizeAspect
-        return view
+    // MARK: - NSViewRepresentable
+
+    func makeNSView(context: Context) -> WKWebView {
+        let config = WKWebViewConfiguration()
+        config.mediaTypesRequiringUserActionForPlayback = []
+        config.userContentController.add(
+            WeakMessageHandler(context.coordinator),
+            name: "videoEnded"
+        )
+        let webView = WKWebView(frame: .zero, configuration: config)
+        webView.setValue(false, forKey: "drawsBackground")
+        return webView
     }
 
-    func updateNSView(_ nsView: AVPlayerView, context: Context) {
-        let coordinator = context.coordinator
-        coordinator.onFinish = onFinish
+    func updateNSView(_ nsView: WKWebView, context: Context) {
+        context.coordinator.onFinish = onFinish
+        guard context.coordinator.currentURL != url else { return }
+        context.coordinator.currentURL = url
 
-        // Reuse the existing player when the URL hasn't changed.
-        let currentURL = (coordinator.player?.currentItem?.asset as? AVURLAsset)?.url
-        guard currentURL != url else { return }
+        let encodedName = url.lastPathComponent
+            .addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+            ?? url.lastPathComponent
 
-        // Tear down the old player.
-        if let obs = coordinator.endObserver {
-            NotificationCenter.default.removeObserver(obs)
-            coordinator.endObserver = nil
-        }
-        coordinator.player?.pause()
+        let html = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <meta charset="utf-8">
+        <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
+        video { width: 100%; height: 100%; object-fit: contain; display: block; }
+        </style>
+        </head>
+        <body>
+        <video autoplay playsinline
+               onended="window.webkit.messageHandlers.videoEnded.postMessage('')">
+          <source src="\(encodedName)" type="video/webm">
+        </video>
+        </body>
+        </html>
+        """
 
-        let item = AVPlayerItem(url: url)
-        let player = AVPlayer(playerItem: item)
-        player.isMuted = false
-        coordinator.player = player
-        nsView.player = player
-
-        coordinator.endObserver = NotificationCenter.default.addObserver(
-            forName: .AVPlayerItemDidPlayToEndTime,
-            object: item,
-            queue: .main
-        ) { [weak coordinator] _ in
-            coordinator?.onFinish()
-        }
-
-        player.play()
+        // baseURL is the video's parent directory so the relative src resolves.
+        nsView.loadHTMLString(html, baseURL: url.deletingLastPathComponent())
     }
 }
