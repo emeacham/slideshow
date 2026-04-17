@@ -8,10 +8,10 @@ public struct ImageFileLoader {
 
     public static let videoExtensions: Set<String> = ["webm"]
 
-    public static let supportedExtensions: Set<String> = [
+    public static let supportedExtensions: Set<String> = Set([
         "jpg", "jpeg", "png", "gif", "bmp",
         "tiff", "tif", "heic", "heif", "webp",
-    ].union(videoExtensions)
+    ]).union(videoExtensions)
 
     public static func loadImages(from directory: URL) throws -> [URL] {
         let contents = try FileManager.default.contentsOfDirectory(
