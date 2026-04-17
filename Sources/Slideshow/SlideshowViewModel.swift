@@ -67,6 +67,44 @@ final class SlideshowViewModel: ObservableObject {
         }
     }
 
+    /// Accepts a dropped URL — either a directory or a supported image file.
+    /// Directories are loaded directly; image files load their parent directory
+    /// and navigate to the specific dropped image.
+    func loadURL(_ url: URL) {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
+            errorMessage = "File not found: \(url.lastPathComponent)"
+            return
+        }
+
+        if isDirectory.boolValue {
+            loadDirectory(url)
+        } else {
+            let ext = url.pathExtension.lowercased()
+            guard ImageFileLoader.supportedExtensions.contains(ext) else {
+                errorMessage = "Unsupported file type: .\(ext)"
+                return
+            }
+            let parentDir = url.deletingLastPathComponent()
+            do {
+                let urls = try ImageFileLoader.loadImages(from: parentDir)
+                withAnimation(controller.transitionType.animation) {
+                    controller.loadImages(urls)
+                }
+                selectedDirectory = parentDir
+                errorMessage = nil
+                if let index = urls.firstIndex(of: url) {
+                    withAnimation(controller.transitionType.animation) {
+                        controller.goToIndex(index)
+                    }
+                }
+                if isPlaying { restartTimer() }
+            } catch {
+                errorMessage = "Could not load images: \(error.localizedDescription)"
+            }
+        }
+    }
+
     // MARK: - Navigation
 
     func next() {
