@@ -8,6 +8,10 @@ import SwiftUI
 // AVFoundation does not decode VP8/VP9, so WebM playback uses WKWebView's
 // HTML5 video stack. The video autoplays immediately; onFinish fires via a
 // JS message handler when the video reaches its natural end.
+//
+// loadHTMLString cannot access file:// URLs (sandbox restriction), so we
+// write a small HTML file next to the video and use loadFileURL with
+// allowingReadAccessTo: pointing at the parent directory.
 struct VideoPlayerView: NSViewRepresentable {
     let url: URL
     let onFinish: () -> Void
@@ -17,6 +21,7 @@ struct VideoPlayerView: NSViewRepresentable {
     final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         var onFinish: () -> Void = {}
         var currentURL: URL?
+        var tempHTMLURL: URL?
 
         func userContentController(
             _ userContentController: WKUserContentController,
@@ -36,7 +41,6 @@ struct VideoPlayerView: NSViewRepresentable {
             }
         }
 
-        // WKNavigationDelegate — catch load failures
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             DebugLog.shared.log("WK-NAV", "didFail: \(error.localizedDescription)")
         }
@@ -48,6 +52,15 @@ struct VideoPlayerView: NSViewRepresentable {
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             DebugLog.shared.log("WK-NAV", "didFinish load")
         }
+
+        func cleanupTempFile() {
+            if let url = tempHTMLURL {
+                try? FileManager.default.removeItem(at: url)
+                tempHTMLURL = nil
+            }
+        }
+
+        deinit { cleanupTempFile() }
     }
 
     // WKUserContentController holds message handlers strongly, which would
@@ -87,30 +100,24 @@ struct VideoPlayerView: NSViewRepresentable {
         context.coordinator.onFinish = onFinish
         guard context.coordinator.currentURL != url else { return }
         context.coordinator.currentURL = url
+        context.coordinator.cleanupTempFile()
 
         let log = DebugLog.shared
-
-        // Log file metadata
         let path = url.path
         let fm = FileManager.default
-        let exists = fm.fileExists(atPath: path)
-        let readable = fm.isReadableFile(atPath: path)
-        log.log("FILE", "path: \(path)")
-        log.log("FILE", "exists: \(exists), readable: \(readable)")
 
+        log.log("FILE", "path: \(path)")
+        log.log("FILE", "exists: \(fm.fileExists(atPath: path)), readable: \(fm.isReadableFile(atPath: path))")
         if let attrs = try? fm.attributesOfItem(atPath: path) {
             let size = (attrs[.size] as? Int64) ?? 0
-            let type = (attrs[.type] as? FileAttributeType)?.rawValue ?? "unknown"
-            log.log("FILE", "size: \(size) bytes, type: \(type)")
+            log.log("FILE", "size: \(size) bytes, type: \((attrs[.type] as? FileAttributeType)?.rawValue ?? "unknown")")
         }
 
-        let baseURL = url.deletingLastPathComponent()
-        log.log("WK-LOAD", "baseURL: \(baseURL.path)")
+        let parentDir = url.deletingLastPathComponent()
+        let filename = url.lastPathComponent
 
-        let encodedName = url.lastPathComponent
-            .addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
-            ?? url.lastPathComponent
-        log.log("WK-LOAD", "src filename (encoded): \(encodedName)")
+        log.log("WK-LOAD", "parentDir: \(parentDir.path)")
+        log.log("WK-LOAD", "filename: \(filename)")
 
         let html = """
         <!DOCTYPE html>
@@ -125,7 +132,7 @@ struct VideoPlayerView: NSViewRepresentable {
         </head>
         <body>
         <video id="v" autoplay playsinline>
-          <source src="\(encodedName)" type="video/webm">
+          <source src="\(filename)" type="video/webm">
         </video>
         <script>
         var v = document.getElementById('v');
@@ -137,10 +144,9 @@ struct VideoPlayerView: NSViewRepresentable {
         v.addEventListener('ended', function() { post('videoEnded', 'ended'); });
 
         v.addEventListener('error', function(e) {
-            var src = v.currentSrc || '(none)';
             var code = v.error ? v.error.code : '?';
             var msg = v.error ? v.error.message : '(no message)';
-            post('videoError', 'MediaError code=' + code + ' msg=' + msg + ' src=' + src);
+            post('videoError', 'MediaError code=' + code + ' msg=' + msg + ' src=' + v.currentSrc);
         });
 
         v.addEventListener('loadstart', function() { post('jsLog', 'loadstart'); });
@@ -153,7 +159,6 @@ struct VideoPlayerView: NSViewRepresentable {
         v.addEventListener('waiting', function() { post('jsLog', 'waiting'); });
         v.addEventListener('suspend', function() { post('jsLog', 'suspend'); });
 
-        // Also capture <source> element errors
         var src = v.querySelector('source');
         if (src) {
             src.addEventListener('error', function(e) {
@@ -167,6 +172,17 @@ struct VideoPlayerView: NSViewRepresentable {
         </html>
         """
 
-        nsView.loadHTMLString(html, baseURL: baseURL)
+        // Write HTML to a temp file in the same directory so loadFileURL
+        // can grant read access to sibling files (the video).
+        let tempName = ".slideshow-player-\(UUID().uuidString).html"
+        let tempURL = parentDir.appendingPathComponent(tempName)
+        do {
+            try html.write(to: tempURL, atomically: true, encoding: .utf8)
+            context.coordinator.tempHTMLURL = tempURL
+            log.log("WK-LOAD", "loading temp HTML: \(tempURL.lastPathComponent)")
+            nsView.loadFileURL(tempURL, allowingReadAccessTo: parentDir)
+        } catch {
+            log.log("WK-LOAD-ERR", "failed to write temp HTML: \(error.localizedDescription)")
+        }
     }
 }
