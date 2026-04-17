@@ -17,6 +17,15 @@ final class ImageFileLoaderTests: XCTestCase {
         XCTAssertTrue(ext.contains("heic"))
         XCTAssertTrue(ext.contains("heif"))
         XCTAssertTrue(ext.contains("webp"))
+        XCTAssertTrue(ext.contains("webm"))
+    }
+
+    func testVideoExtensionsContainsWebM() {
+        XCTAssertTrue(ImageFileLoader.videoExtensions.contains("webm"))
+    }
+
+    func testVideoExtensionsAreSubsetOfSupportedExtensions() {
+        XCTAssertTrue(ImageFileLoader.videoExtensions.isSubset(of: ImageFileLoader.supportedExtensions))
     }
 
     func testUnsupportedExtensionsExcluded() {

@@ -146,6 +146,12 @@ SwiftUI-specific behavior (animation curves, `AnyTransition`) is added via `exte
 1. Add the extension string to `ImageFileLoader.supportedExtensions` in `Sources/SlideshowCore/ImageFileLoader.swift`
 2. Add it to the test in `ImageFileLoaderTests.testSupportedExtensionsContainsCommonFormats`
 
+### Adding a supported video format
+
+1. Add the extension string to `ImageFileLoader.videoExtensions` (it is automatically included in `supportedExtensions`)
+2. Verify `VideoPlayerView` can decode the codec via AVFoundation; add any required `AVURLAsset` options if needed
+3. Add the format to `testVideoExtensionsContainsWebM` (or add a new assertion) and update `README.md`
+
 ### Rebuilding the .app after code changes
 
 ```bash
@@ -154,8 +160,14 @@ SwiftUI-specific behavior (animation curves, `AnyTransition`) is added via `exte
 
 ---
 
-## Supported Image Formats
+## Supported Formats
 
+### Images
 `jpg` · `jpeg` · `png` · `gif` (animated) · `bmp` · `tiff` · `tif` · `heic` · `heif` · `webp`
 
 Animated GIFs loop continuously until the slideshow advances to the next image.
+
+### Video
+`webm` (VP8 / VP9 — requires macOS 11+)
+
+WebM files play once at full quality via AVKit. When the slideshow is running in play mode, the next slide loads automatically when the video finishes (video duration overrides the slide-delay timer for that slide).

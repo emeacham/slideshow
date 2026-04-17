@@ -54,8 +54,16 @@ final class SlideshowViewModel: ObservableObject {
     }
 
     func loadDirectory(_ url: URL) {
+        let log = DebugLog.shared
+        log.log("LOAD", "loadDirectory: \(url.path)")
         do {
             let urls = try ImageFileLoader.loadImages(from: url)
+            log.log("LOAD", "found \(urls.count) supported files")
+            for u in urls {
+                let ext = u.pathExtension.lowercased()
+                let isVideo = ImageFileLoader.videoExtensions.contains(ext)
+                log.log("LOAD", "  \(isVideo ? "🎬" : "🖼") \(u.lastPathComponent)")
+            }
             withAnimation(controller.transitionType.animation) {
                 controller.loadImages(urls)
             }
@@ -63,8 +71,58 @@ final class SlideshowViewModel: ObservableObject {
             errorMessage = nil
             if isPlaying { restartTimer() }
         } catch {
+            log.log("LOAD-ERR", error.localizedDescription)
             errorMessage = "Could not load images: \(error.localizedDescription)"
         }
+    }
+
+    /// Accepts a dropped URL — either a directory or a supported image file.
+    /// Directories are loaded directly; image files load their parent directory
+    /// and navigate to the specific dropped image.
+    func loadURL(_ url: URL) {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
+            errorMessage = "File not found: \(url.lastPathComponent)"
+            return
+        }
+
+        if isDirectory.boolValue {
+            loadDirectory(url)
+        } else {
+            let ext = url.pathExtension.lowercased()
+            guard ImageFileLoader.supportedExtensions.contains(ext) else {
+                errorMessage = "Unsupported file type: .\(ext)"
+                return
+            }
+            let parentDir = url.deletingLastPathComponent()
+            do {
+                let urls = try ImageFileLoader.loadImages(from: parentDir)
+                withAnimation(controller.transitionType.animation) {
+                    controller.loadImages(urls)
+                }
+                selectedDirectory = parentDir
+                errorMessage = nil
+                if let index = urls.firstIndex(of: url) {
+                    withAnimation(controller.transitionType.animation) {
+                        controller.goToIndex(index)
+                    }
+                }
+                if isPlaying { restartTimer() }
+            } catch {
+                errorMessage = "Could not load images: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    // MARK: - Video playback
+
+    /// Called by VideoPlayerView when a video reaches its natural end.
+    /// When the slideshow is playing, advances to the next slide and resets
+    /// the slide timer so the following slide gets its full duration.
+    func videoDidFinish() {
+        guard isPlaying else { return }
+        next()
+        restartTimer()
     }
 
     // MARK: - Navigation
@@ -108,7 +166,7 @@ final class SlideshowViewModel: ObservableObject {
             .sink { [weak self] _ in self?.next() }
     }
 
-    private func restartTimer() {
+    func restartTimer() {
         guard isPlaying else { return }
         scheduleTimer()
     }
